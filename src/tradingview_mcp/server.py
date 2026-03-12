@@ -1141,11 +1141,15 @@ def main() -> None:
 
 		async def _keep_alive():
 			import httpx
+			# Prefer the public URL so Render registers real traffic and never sleeps.
+			# RENDER_EXTERNAL_URL is injected automatically by Render on all deployments.
+			public_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+			ping_url = f"{public_url}/health" if public_url else f"http://127.0.0.1:{args.port}/health"
 			await anyio.sleep(60)
 			while True:
 				try:
 					async with httpx.AsyncClient() as client:
-						await client.get(f"http://127.0.0.1:{args.port}/health", timeout=5)
+						await client.get(ping_url, timeout=10)
 				except Exception:
 					pass
 				await anyio.sleep(840)  # ping every 14 minutes to prevent Render sleep
