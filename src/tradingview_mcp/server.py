@@ -1139,6 +1139,17 @@ def main() -> None:
 				routes=[Route("/health", health), Mount("/", app=starlette_app)],
 			)
 
+		async def _keep_alive():
+			import httpx
+			await anyio.sleep(60)
+			while True:
+				try:
+					async with httpx.AsyncClient() as client:
+						await client.get(f"http://127.0.0.1:{args.port}/health", timeout=5)
+				except Exception:
+					pass
+				await anyio.sleep(840)  # ping every 14 minutes to prevent Render sleep
+
 		async def _serve():
 			config = uvicorn.Config(
 				starlette_app,
@@ -1147,7 +1158,9 @@ def main() -> None:
 				log_level="info",
 			)
 			server = uvicorn.Server(config)
-			await server.serve()
+			async with anyio.create_task_group() as tg:
+				tg.start_soon(server.serve)
+				tg.start_soon(_keep_alive)
 
 		anyio.run(_serve)
 
