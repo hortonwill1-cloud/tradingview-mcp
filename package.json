@@ -35,12 +35,18 @@
     "description": "Advanced TradingView crypto screener with Bollinger Band analysis and candle pattern detection",
     "tools": [
       "top_gainers",
-      "top_losers", 
+      "top_losers",
       "bollinger_scan",
       "rating_filter",
       "coin_analysis",
       "consecutive_candles_scan",
-      "advanced_candle_pattern"
+      "advanced_candle_pattern",
+      "volume_breakout_scanner",
+      "volume_confirmation_analysis",
+      "smart_volume_scanner",
+      "rsi_scanner",
+      "trend_scanner",
+      "multi_timeframe_summary"
     ],
     "resources": [
       "exchanges://list"
