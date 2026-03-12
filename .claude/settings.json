@@ -10,5 +10,14 @@
         ]
       }
     ]
+  },
+  "mcpServers": {
+    "tradingview-mcp": {
+      "command": "uv",
+      "args": ["run", "tradingview-mcp"],
+      "env": {
+        "PYTHONPATH": "src"
+      }
+    }
   }
 }
