@@ -1162,8 +1162,17 @@ def main() -> None:
 				log_level="info",
 			)
 			server = uvicorn.Server(config)
+
+			async def _run_server():
+				try:
+					await server.serve()
+				finally:
+					# When the server exits (graceful shutdown or error), cancel the
+					# keep-alive task so the process can exit cleanly instead of hanging.
+					tg.cancel_scope.cancel()
+
 			async with anyio.create_task_group() as tg:
-				tg.start_soon(server.serve)
+				tg.start_soon(_run_server)
 				tg.start_soon(_keep_alive)
 
 		anyio.run(_serve)
