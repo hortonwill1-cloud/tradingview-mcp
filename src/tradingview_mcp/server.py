@@ -270,15 +270,17 @@ def _fetch_trending_analysis(
     rating_filter: Optional[int] = None,
     limit: int = 50,
 ) -> List[dict]:
-    """Fetch trending coins, processing in batches."""
+    """Fetch trending coins, processing in batches with early exit."""
     symbols = load_symbols(exchange)
     if not symbols:
         raise RuntimeError(f"No symbols found for exchange: {exchange}")
 
     batch_size = 200
+    # Cap total symbols to avoid excessive API calls on large exchanges
+    max_symbols = min(len(symbols), limit * 10, 1000)
     all_coins: List[dict] = []
 
-    for i in range(0, len(symbols), batch_size):
+    for i in range(0, max_symbols, batch_size):
         batch = symbols[i : i + batch_size]
         try:
             analysis = _fetch_ta_batch(exchange, batch, timeframe)
@@ -307,6 +309,10 @@ def _fetch_trending_analysis(
                 })
             except (TypeError, ZeroDivisionError, KeyError):
                 continue
+
+        # Early exit when we have enough candidates to sort from
+        if filter_type != "rating" and len(all_coins) >= limit * 3:
+            break
 
     all_coins.sort(key=lambda x: x["changePercent"], reverse=True)
     return all_coins[:limit]
@@ -461,7 +467,7 @@ def top_gainers(
     exchange: str = "KUCOIN",
     timeframe: str = "15m",
     limit: int = 25,
-    compact: bool = False,
+    compact: bool = True,
 ) -> list[dict]:
     """Return top gainers for an exchange and timeframe using bollinger band analysis.
 
@@ -469,7 +475,7 @@ def top_gainers(
         exchange: Exchange name like KUCOIN, BINANCE, BYBIT, etc.
         timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M
         limit: Number of rows to return (max 50)
-        compact: If True, return only regime-critical fields — ~70% fewer tokens.
+        compact: If True (default), return only regime-critical fields — ~70% fewer tokens.
     """
     err = _require_ta() or _check_connectivity()
     if err:
@@ -492,7 +498,7 @@ def top_losers(
     exchange: str = "KUCOIN",
     timeframe: str = "15m",
     limit: int = 25,
-    compact: bool = False,
+    compact: bool = True,
 ) -> list[dict]:
     """Return top losers for an exchange and timeframe using bollinger band analysis.
 
@@ -500,7 +506,7 @@ def top_losers(
         exchange: Exchange name like KUCOIN, BINANCE, BYBIT, etc.
         timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M
         limit: Number of rows to return (max 50)
-        compact: If True, return only regime-critical fields — ~70% fewer tokens.
+        compact: If True (default), return only regime-critical fields — ~70% fewer tokens.
     """
     err = _require_ta() or _check_connectivity()
     if err:
@@ -511,12 +517,14 @@ def top_losers(
     limit = max(1, min(limit, 50))
 
     try:
-        rows = _fetch_trending_analysis(exchange, timeframe=timeframe, limit=limit)
+        # Fetch a larger pool so we can pick the worst performers
+        rows = _fetch_trending_analysis(exchange, timeframe=timeframe, limit=limit * 5)
     except (ConnectionError, RuntimeError) as e:
         return [{"error": str(e)}]
 
     rows.sort(key=lambda x: x["changePercent"])
-    return [_compact_scan_row(r) for r in rows[:limit]] if compact else rows[:limit]
+    losers = rows[:limit]
+    return [_compact_scan_row(r) for r in losers] if compact else losers
 
 
 @mcp.tool()
@@ -525,7 +533,7 @@ def bollinger_scan(
     timeframe: str = "4h",
     bbw_threshold: float = 0.04,
     limit: int = 50,
-    compact: bool = False,
+    compact: bool = True,
 ) -> list[dict]:
     """Scan for coins with low Bollinger Band Width (squeeze detection).
 
@@ -534,7 +542,7 @@ def bollinger_scan(
         timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M
         bbw_threshold: Maximum BBW value to filter (default 0.04)
         limit: Number of rows to return (max 100)
-        compact: If True, return only regime-critical fields — ~70% fewer tokens.
+        compact: If True (default), return only regime-critical fields — ~70% fewer tokens.
     """
     err = _require_ta() or _check_connectivity()
     if err:
@@ -558,7 +566,7 @@ def rating_filter(
     timeframe: str = "5m",
     rating: int = 2,
     limit: int = 25,
-    compact: bool = False,
+    compact: bool = True,
 ) -> list[dict]:
     """Filter coins by Bollinger Band rating.
 
@@ -567,7 +575,7 @@ def rating_filter(
         timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M
         rating: BB rating (-3 to +3): -3=Strong Sell, -2=Sell, -1=Weak Sell, 1=Weak Buy, 2=Buy, 3=Strong Buy
         limit: Number of rows to return (max 50)
-        compact: If True, return only regime-critical fields — ~70% fewer tokens.
+        compact: If True (default), return only regime-critical fields — ~70% fewer tokens.
     """
     err = _require_ta() or _check_connectivity()
     if err:
@@ -925,7 +933,7 @@ def volume_breakout_scanner(
     volume_multiplier: float = 2.0,
     price_change_min: float = 3.0,
     limit: int = 25,
-    compact: bool = False,
+    compact: bool = True,
 ) -> list[dict]:
     """Detect coins with volume breakout + price breakout.
 
@@ -935,7 +943,7 @@ def volume_breakout_scanner(
         volume_multiplier: How many times the volume should be above normal (default 2.0)
         price_change_min: Minimum price change percentage (default 3.0)
         limit: Number of rows to return (max 50)
-        compact: If True, return only regime-critical fields — ~70% fewer tokens.
+        compact: If True (default), return only regime-critical fields — ~70% fewer tokens.
     """
     err = _require_ta() or _check_connectivity()
     if err:
@@ -953,8 +961,9 @@ def volume_breakout_scanner(
 
     volume_breakouts: List[dict] = []
     batch_size = 100
+    max_symbols = min(len(symbols), 500)
 
-    for i in range(0, min(len(symbols), 500), batch_size):
+    for i in range(0, max_symbols, batch_size):
         batch = symbols[i : i + batch_size]
         try:
             analysis = _fetch_ta_batch(exchange, batch, timeframe)
@@ -1006,6 +1015,9 @@ def volume_breakout_scanner(
             except Exception:
                 continue
 
+        if len(volume_breakouts) >= limit * 3:
+            break
+
     volume_breakouts.sort(key=lambda x: (x["volume_strength"], abs(x["changePercent"])), reverse=True)
     results = volume_breakouts[:limit]
     return [_compact_scan_row(r) for r in results] if compact else results
@@ -1033,8 +1045,11 @@ def volume_confirmation_analysis(
     exchange = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "15m")
 
-    if not symbol.upper().endswith("USDT"):
-        symbol = symbol.upper() + "USDT"
+    symbol = symbol.upper()
+    # Only append USDT for crypto exchanges where symbols typically need it
+    screener = EXCHANGE_SCREENER.get(exchange, "crypto")
+    if screener == "crypto" and not symbol.endswith(("USDT", "USDC", "BTC", "ETH", "BUSD")):
+        symbol = symbol + "USDT"
 
     try:
         analysis = _fetch_ta_batch(exchange, [symbol], timeframe)
@@ -1126,7 +1141,7 @@ def smart_volume_scanner(
     min_price_change: float = 2.0,
     rsi_range: str = "any",
     limit: int = 20,
-    compact: bool = False,
+    compact: bool = True,
 ) -> list[dict]:
     """Smart volume + technical analysis combination scanner.
 
@@ -1136,7 +1151,7 @@ def smart_volume_scanner(
         min_price_change: Minimum price change percentage (default 2.0)
         rsi_range: "oversold" (<30), "overbought" (>70), "neutral" (30-70), "any"
         limit: Number of results (max 30)
-        compact: If True, return only regime-critical fields — ~70% fewer tokens.
+        compact: If True (default), return only regime-critical fields — ~70% fewer tokens.
     """
     exchange = sanitize_exchange(exchange, "KUCOIN")
     min_volume_ratio = max(1.2, min(10.0, min_volume_ratio))
@@ -1186,7 +1201,7 @@ def rsi_scanner(
     condition: str = "oversold",
     rsi_threshold: Optional[float] = None,
     limit: int = 20,
-    compact: bool = False,
+    compact: bool = True,
 ) -> list[dict]:
     """Scan for coins matching a specific RSI condition.
 
@@ -1196,7 +1211,7 @@ def rsi_scanner(
         condition: "oversold" (RSI < 30), "overbought" (RSI > 70), or "custom" (use rsi_threshold)
         rsi_threshold: Custom RSI threshold — used only when condition="custom".
         limit: Number of rows to return (max 50)
-        compact: If True, return only regime-critical fields — ~70% fewer tokens.
+        compact: If True (default), return only regime-critical fields — ~70% fewer tokens.
     """
     err = _require_ta() or _check_connectivity()
     if err:
@@ -1211,9 +1226,10 @@ def rsi_scanner(
         return [{"error": f"No symbols found for exchange: {exchange}"}]
 
     batch_size = 200
+    max_symbols = min(len(symbols), 1000)
     matched: List[dict] = []
 
-    for i in range(0, len(symbols), batch_size):
+    for i in range(0, max_symbols, batch_size):
         if len(matched) >= limit * 3:
             break
         batch = symbols[i : i + batch_size]
@@ -1275,7 +1291,7 @@ def trend_scanner(
     min_adx: float = 25.0,
     direction: str = "any",
     limit: int = 20,
-    compact: bool = False,
+    compact: bool = True,
 ) -> list[dict]:
     """Scan for strongly trending coins using ADX (Average Directional Index).
 
@@ -1285,7 +1301,7 @@ def trend_scanner(
         min_adx: Minimum ADX value to qualify as trending (default 25.0; >40 = very strong)
         direction: "bullish" (price above EMA50), "bearish" (below EMA50), or "any"
         limit: Number of rows to return (max 50)
-        compact: If True, return only regime-critical fields — ~70% fewer tokens.
+        compact: If True (default), return only regime-critical fields — ~70% fewer tokens.
     """
     err = _require_ta() or _check_connectivity()
     if err:
@@ -1301,9 +1317,10 @@ def trend_scanner(
         return [{"error": f"No symbols found for exchange: {exchange}"}]
 
     batch_size = 200
+    max_symbols = min(len(symbols), 1000)
     matched: List[dict] = []
 
-    for i in range(0, len(symbols), batch_size):
+    for i in range(0, max_symbols, batch_size):
         if len(matched) >= limit * 3:
             break
         batch = symbols[i : i + batch_size]
